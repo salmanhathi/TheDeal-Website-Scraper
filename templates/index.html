@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Product Availability Checker — The Deal Outlet</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  :root {
+    --bg:      #f0f2f5;
+    --surface: #ffffff;
+    --border:  #e2e8f0;
+    --border2: #f1f5f9;
+    --text1:   #0f172a;
+    --text2:   #475569;
+    --text3:   #94a3b8;
+    --night:   #0d1117;
+    --night2:  #161b22;
+    --orange:  #f97316;
+    --orange2: #ea580c;
+    --green:   #10b981;
+    --red:     #ef4444;
+    --amber:   #f59e0b;
+    --blue:    #3b82f6;
+    --purple:  #8b5cf6;
+    --radius:  10px;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text1); min-height: 100vh; font-size: 14px; line-height: 1.5; }
+
+  /* Header */
+  .header { background: var(--night); padding: 0 32px; display: flex; align-items: center; height: 60px; position: sticky; top: 0; z-index: 100; border-bottom: 1px solid rgba(255,255,255,.06); }
+  .header-logo img { height: 30px; display: block; }
+  .header-divider { width: 1px; height: 24px; background: rgba(255,255,255,.12); margin: 0 18px; }
+  .header-title { font-family: 'Space Grotesk', sans-serif; font-size: 14px; font-weight: 600; color: #fff; }
+  .header-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+  .last-run { font-size: 11px; color: var(--text3); display: flex; align-items: center; gap: 6px; }
+  .pulse-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); display: inline-block; }
+  .pulse-dot.idle { background: var(--text3); }
+
+  /* Layout */
+  .layout { display: grid; grid-template-columns: 300px 1fr; min-height: calc(100vh - 60px); }
+
+  /* Sidebar */
+  .sidebar { background: var(--surface); border-right: 1px solid var(--border); padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+
+  /* Cards */
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .card-header { padding: 12px 16px; font-size: 11px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--text3); border-bottom: 1px solid var(--border2); background: #fafafa; }
+  .card-body { padding: 16px; }
+
+  /* Mode selector */
+  .mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .mode-card { border: 2px solid var(--border); border-radius: 8px; padding: 10px; cursor: pointer; transition: all .15s; text-align: center; }
+  .mode-card:hover { border-color: var(--orange); background: #fff7ed; }
+  .mode-card.active { border-color: var(--orange); background: #fff7ed; }
+  .mode-card input { display: none; }
+  .mode-icon { font-size: 20px; margin-bottom: 4px; }
+  .mode-label { font-size: 11px; font-weight: 600; color: var(--text2); display: block; }
+  .mode-desc { font-size: 10px; color: var(--text3); margin-top: 2px; display: block; }
+  .mode-card.active .mode-label { color: var(--orange); }
+
+  /* Upload */
+  .drop-zone { border: 2px dashed var(--border); border-radius: 8px; padding: 24px 16px; text-align: center; cursor: pointer; transition: border-color .2s, background .2s; position: relative; }
+  .drop-zone:hover, .drop-zone.dragover { border-color: var(--orange); background: #fff7ed; }
+  .drop-zone input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+  .drop-icon { font-size: 26px; margin-bottom: 6px; }
+  .drop-text { font-size: 13px; color: var(--text2); }
+  .drop-hint { font-size: 11px; color: var(--text3); margin-top: 4px; }
+  .file-badge { display: none; align-items: center; gap: 10px; padding: 10px 12px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; margin-top: 10px; }
+  .file-badge.visible { display: flex; }
+  .file-badge-name { font-size: 12px; font-weight: 600; color: #065f46; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .file-badge-count { font-size: 11px; color: #047857; }
+
+  /* Buttons */
+  .btn { display: flex; align-items: center; justify-content: center; gap: 7px; padding: 10px 18px; border-radius: 8px; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; border: none; transition: all .15s; width: 100%; }
+  .btn-primary { background: var(--orange); color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: var(--orange2); }
+  .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-secondary { background: transparent; color: var(--text2); border: 1px solid var(--border); }
+  .btn-secondary:hover { background: var(--bg); }
+  .btn-danger { background: transparent; color: var(--red); border: 1px solid #fecaca; }
+  .btn-danger:hover { background: #fff5f5; }
+
+  .btn-spinner { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite; display: none; }
+  .btn-spinner.active { display: block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Schedule */
+  .schedule-info { display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: var(--bg); border-radius: 8px; font-size: 12px; color: var(--text2); }
+  .schedule-time { font-weight: 600; color: var(--text1); font-family: 'JetBrains Mono', monospace; }
+
+  /* Settings */
+  .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+  .field:last-child { margin-bottom: 0; }
+  .field label { font-size: 11px; font-weight: 600; color: var(--text2); letter-spacing: .03em; }
+  .field input, .field select { padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font-family: inherit; font-size: 13px; color: var(--text1); background: var(--surface); transition: border-color .15s; width: 100%; }
+  .field input:focus, .field select:focus { outline: none; border-color: var(--orange); }
+  .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .field-hint { font-size: 10px; color: var(--text3); }
+
+  .collapsible-btn { width: 100%; display: flex; align-items: center; justify-content: space-between; background: none; border: none; padding: 12px 16px; font-family: inherit; font-size: 11px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--text3); cursor: pointer; border-bottom: 1px solid var(--border2); background: #fafafa; transition: background .15s; }
+  .collapsible-btn:hover { background: #f4f5f6; }
+  .collapsible-arrow { transition: transform .2s; }
+  .collapsible-btn.open .collapsible-arrow { transform: rotate(180deg); }
+  .collapsible-content { display: none; padding: 16px; }
+  .collapsible-content.open { display: block; }
+
+  .toggle-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .toggle-label { font-size: 12px; color: var(--text2); font-weight: 500; }
+  .toggle { position: relative; width: 36px; height: 20px; display: inline-block; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle-track { position: absolute; inset: 0; background: var(--border); border-radius: 20px; cursor: pointer; transition: background .2s; }
+  .toggle input:checked + .toggle-track { background: var(--orange); }
+  .toggle-track::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; background: #fff; border-radius: 50%; transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+  .toggle input:checked + .toggle-track::after { transform: translateX(16px); }
+  .divider { height: 1px; background: var(--border); margin: 4px 0; }
+
+  /* Run status */
+  .run-status { display: none; align-items: center; gap: 8px; padding: 10px 14px; background: var(--night); color: #fff; border-radius: 8px; font-size: 12px; font-weight: 500; }
+  .run-status.visible { display: flex; }
+
+  /* Main */
+  .main { padding: 28px 28px 40px; overflow: hidden; }
+
+  /* Partial banner */
+  .partial-banner { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: #fef3c7; border: 1px solid #fde68a; border-radius: 10px; margin-bottom: 18px; font-size: 13px; color: #92400e; }
+
+  /* Stats */
+  .stats-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 24px; }
+  .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; position: relative; overflow: hidden; }
+  .stat-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
+  .stat-card.s-total::before  { background: var(--text3); }
+  .stat-card.s-found::before  { background: var(--green); }
+  .stat-card.s-missing::before{ background: var(--red); }
+  .stat-card.s-noimg::before  { background: var(--amber); }
+  .stat-card.s-nostock::before{ background: var(--purple); }
+  .stat-num { font-family: 'Space Grotesk', sans-serif; font-size: 30px; font-weight: 700; line-height: 1; color: var(--text1); }
+  .stat-num.s-found   { color: var(--green); }
+  .stat-num.s-missing { color: var(--red); }
+  .stat-num.s-noimg   { color: var(--amber); }
+  .stat-num.s-nostock { color: var(--purple); }
+  .stat-label { font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text3); margin-top: 6px; }
+
+  /* Mode badge */
+  .mode-badge { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; margin-bottom: 16px; }
+  .mode-badge.m-all    { background: #fff7ed; color: var(--orange); }
+  .mode-badge.m-stock  { background: #ede9fe; color: var(--purple); }
+  .mode-badge.m-images { background: #fef3c7; color: var(--amber); }
+  .mode-badge.m-prices { background: #f0fdf4; color: var(--green); }
+
+  /* Toolbar */
+  .toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .filter-tabs { display: flex; gap: 4px; }
+  .tab { padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 500; cursor: pointer; border: none; background: transparent; color: var(--text3); transition: all .15s; font-family: inherit; }
+  .tab:hover { background: var(--border2); color: var(--text2); }
+  .tab.active { background: var(--night); color: #fff; }
+  .toolbar-right { display: flex; gap: 8px; align-items: center; }
+  .download-btn { display: flex; align-items: center; gap: 6px; padding: 7px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; font-family: inherit; font-size: 12px; font-weight: 600; color: var(--text2); cursor: pointer; text-decoration: none; transition: all .15s; }
+  .download-btn:hover { background: var(--bg); }
+  .search-wrap { position: relative; }
+  .search-wrap input { padding: 7px 12px 7px 32px; border: 1px solid var(--border); border-radius: 8px; font-family: inherit; font-size: 12px; color: var(--text1); background: var(--surface); width: 200px; }
+  .search-wrap input:focus { outline: none; border-color: var(--orange); }
+  .search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text3); font-size: 13px; pointer-events: none; }
+
+  /* Table */
+  .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .table-scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead th { padding: 10px 14px; text-align: left; font-size: 10.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text3); background: #fafafa; border-bottom: 1px solid var(--border); white-space: nowrap; cursor: pointer; user-select: none; }
+  thead th:hover { color: var(--text2); }
+  tbody tr { border-bottom: 1px solid var(--border2); transition: background .1s; border-left: 3px solid transparent; }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: #fafbfc; }
+  tbody tr.r-found   { border-left-color: var(--green); }
+  tbody tr.r-missing { border-left-color: var(--red); }
+  tbody tr.r-error   { border-left-color: var(--blue); }
+  td { padding: 10px 14px; vertical-align: middle; }
+
+  .badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 20px; font-size: 10.5px; font-weight: 600; white-space: nowrap; }
+  .badge-found   { background: #dcfce7; color: #15803d; }
+  .badge-missing { background: #fee2e2; color: #b91c1c; }
+  .badge-nodetail{ background: #fef3c7; color: #b45309; }
+  .badge-error   { background: #e0f2fe; color: #0369a1; }
+  .badge-other   { background: #f1f5f9; color: #475569; }
+
+  .stock-pill { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; }
+  .stock-pill.in  { color: var(--green); }
+  .stock-pill.out { color: var(--red); }
+
+  .pid { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text2); }
+  .price-was { font-size: 11px; color: var(--text3); text-decoration: line-through; }
+  .price-now { font-weight: 600; color: var(--text1); }
+  .img-pill { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; }
+  .img-pill.yes { color: var(--green); }
+  .img-pill.no  { color: var(--red); }
+  .link-btn { display: inline-flex; align-items: center; gap: 4px; color: var(--orange); text-decoration: none; font-size: 12px; font-weight: 500; padding: 3px 8px; border-radius: 6px; transition: background .15s; }
+  .link-btn:hover { background: #fff7ed; }
+
+  /* Empty */
+  .empty-state { padding: 80px 24px; text-align: center; color: var(--text3); }
+  .empty-icon  { font-size: 48px; margin-bottom: 16px; }
+  .empty-title { font-size: 16px; font-weight: 600; color: var(--text2); margin-bottom: 6px; }
+
+  /* Toast */
+  .toast { position: fixed; bottom: 28px; right: 28px; background: var(--night); color: #fff; padding: 12px 20px; border-radius: 10px; font-size: 13px; font-weight: 500; box-shadow: 0 8px 24px rgba(0,0,0,.25); transform: translateY(20px); opacity: 0; transition: all .25s; z-index: 200; max-width: 340px; display: flex; align-items: center; gap: 10px; }
+  .toast.show { transform: translateY(0); opacity: 1; }
+  .toast.success .toast-icon::before { content: '✓'; color: var(--green); }
+  .toast.error   .toast-icon::before { content: '✗'; color: var(--red); }
+  .toast.info    .toast-icon::before { content: 'ℹ'; color: var(--blue); }
+
+  .hidden-row { display: none !important; }
+
+  /* Confirm dialog */
+  .confirm-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 300; align-items: center; justify-content: center; }
+  .confirm-overlay.show { display: flex; }
+  .confirm-box { background: #fff; border-radius: 12px; padding: 28px; max-width: 380px; width: 90%; text-align: center; }
+  .confirm-box h3 { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
+  .confirm-box p  { font-size: 13px; color: var(--text2); margin-bottom: 20px; }
+  .confirm-actions { display: flex; gap: 10px; }
+  .confirm-actions .btn { flex: 1; }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<header class="header">
+  <div class="header-logo">
+    <img src="https://www.thedealoutlet.com/on/demandware.static/Sites-TheDealOutlet_AE-Site/-/default/dwf652137f/images/logo.svg" alt="The Deal Outlet" onerror="this.style.display='none'">
+  </div>
+  <div class="header-divider"></div>
+  <div class="header-title">Product Availability Checker</div>
+  <div class="header-right">
+    <div class="last-run" id="lastRunBadge">
+      <span class="pulse-dot idle" id="statusDot"></span>
+      <span id="lastRunText">
+        {% if state.last_run %}Last run {{ state.last_run[:10] }} {{ state.last_run[11:16] }}
+        {% else %}No runs yet{% endif %}
+      </span>
+    </div>
+  </div>
+</header>
+
+<!-- Layout -->
+<div class="layout">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+
+    <!-- Mode selector -->
+    <div class="card">
+      <div class="card-header">🎯 Scrape Mode</div>
+      <div class="card-body">
+        <div class="mode-grid" id="modeGrid">
+
+          <label class="mode-card active" id="mc-all">
+            <input type="radio" name="mode" value="all" checked>
+            <div class="mode-icon">🔍</div>
+            <span class="mode-label">Scrape All</span>
+            <span class="mode-desc">Full details</span>
+          </label>
+
+          <label class="mode-card" id="mc-stock">
+            <input type="radio" name="mode" value="stock">
+            <div class="mode-icon">📦</div>
+            <span class="mode-label">Stock Only</span>
+            <span class="mode-desc">Qty + button</span>
+          </label>
+
+          <label class="mode-card" id="mc-images">
+            <input type="radio" name="mode" value="images">
+            <div class="mode-icon">🖼</div>
+            <span class="mode-label">Images Only</span>
+            <span class="mode-desc">Yes / No</span>
+          </label>
+
+          <label class="mode-card" id="mc-prices">
+            <input type="radio" name="mode" value="prices">
+            <div class="mode-icon">💰</div>
+            <span class="mode-label">Prices Only</span>
+            <span class="mode-desc">Was / Now</span>
+          </label>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- Upload -->
+    <div class="card">
+      <div class="card-header">📂 Data Source</div>
+      <div class="card-body">
+        <div class="drop-zone" id="dropZone">
+          <input type="file" id="fileInput" accept=".xlsx,.xls">
+          <div class="drop-icon">📊</div>
+          <div class="drop-text">Drop Excel file here</div>
+          <div class="drop-hint">or click to browse · .xlsx</div>
+        </div>
+        <div class="file-badge {% if has_file %}visible{% endif %}" id="fileBadge">
+          <span style="font-size:18px">✅</span>
+          <div>
+            <div class="file-badge-name" id="fileName">{% if has_file %}File loaded{% endif %}</div>
+            <div class="file-badge-count" id="fileCount"></div>
+          </div>
+        </div>
+        <div style="margin-top:8px;font-size:11px;color:var(--text3);line-height:1.5">
+          Column A: Product IDs · Columns B–E: any extra data
+        </div>
+      </div>
+    </div>
+
+    <!-- Run -->
+    <div class="card">
+      <div class="card-header">▶ Actions</div>
+      <div class="card-body" style="display:flex;flex-direction:column;gap:10px">
+        <button class="btn btn-primary" id="runBtn" onclick="runCheck()">
+          <div class="btn-spinner" id="runSpinner"></div>
+          <span id="runBtnText">▶ Run Now</span>
+        </button>
+        <div class="run-status" id="runStatus">
+          <span class="btn-spinner active" style="border-top-color:var(--orange);border-color:rgba(249,115,22,.3)"></span>
+          <span>Checking products…</span>
+        </div>
+        <div class="schedule-info">
+          ⏰ Daily at <span class="schedule-time" id="scheduleDisplay">
+            {{ '%02d'|format(config.schedule_hour|int) }}:{{ '%02d'|format(config.schedule_minute|int) }}
+          </span> GST
+        </div>
+        {% if state.results %}
+        <a href="/download" class="btn btn-secondary" style="text-decoration:none">⬇ Download CSV</a>
+        {% endif %}
+        {% if state.results %}
+        <button class="btn btn-danger" onclick="showClear()">🗑 Clear Results</button>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Settings -->
+    <div class="card" style="flex:1">
+      <button class="collapsible-btn" id="settingsToggle" onclick="toggleSettings()">
+        ⚙ Settings <span class="collapsible-arrow">▾</span>
+      </button>
+      <div class="collapsible-content" id="settingsContent">
+        <div class="toggle-row">
+          <span class="toggle-label">Send email report</span>
+          <label class="toggle">
+            <input type="checkbox" id="sendEmailToggle" {% if config.send_email != 'false' %}checked{% endif %} onchange="saveConfig()">
+            <span class="toggle-track"></span>
+          </label>
+        </div>
+        <div class="field">
+          <label>Send to</label>
+          <input type="email" id="emailTo" placeholder="you@company.com" value="{{ config.email_to }}" onchange="saveConfig()">
+        </div>
+        <div class="field">
+          <label>Send from (Gmail)</label>
+          <input type="email" id="emailFrom" placeholder="sender@gmail.com" value="{{ config.email_from }}" onchange="saveConfig()">
+        </div>
+        <div class="field">
+          <label>Gmail App Password</label>
+          <input type="password" id="emailPass" placeholder="Set via Render env var" onchange="saveConfig()">
+          <span class="field-hint">Recommended: set EMAIL_PASSWORD in Render dashboard</span>
+        </div>
+        <div class="divider" style="margin:12px 0"></div>
+        <div style="font-size:11px;font-weight:600;color:var(--text3);letter-spacing:.05em;text-transform:uppercase;margin-bottom:10px">Schedule</div>
+        <div class="field-row">
+          <div class="field"><label>Hour (0–23)</label><input type="number" id="schedHour" min="0" max="23" value="{{ config.schedule_hour }}" onchange="saveConfig()"></div>
+          <div class="field"><label>Minute</label><input type="number" id="schedMin" min="0" max="59" value="{{ config.schedule_minute }}" onchange="saveConfig()"></div>
+        </div>
+        <div class="field-hint">Timezone: Asia/Dubai (GST UTC+4)</div>
+        <div class="divider" style="margin:12px 0"></div>
+        <div style="font-size:11px;color:var(--text3);line-height:1.6">
+          External cron: <a href="https://cron-job.org" target="_blank" style="color:var(--orange)">cron-job.org</a><br>
+          <span style="font-family:monospace;font-size:10px;background:#f1f5f9;padding:2px 5px;border-radius:4px;display:inline-block;margin-top:4px;word-break:break-all;">{{ request.host_url }}trigger</span>
+        </div>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+
+    {% if state.partial %}
+    <div class="partial-banner">
+      <span style="font-size:18px">⏳</span>
+      <span><b>Run in progress or interrupted</b> — showing {{ state.total }} of full list. Click <b>Run Now</b> to resume.</span>
+    </div>
+    {% endif %}
+
+    <!-- Mode badge -->
+    {% if state.results %}
+    {% set m = state.mode or 'all' %}
+    <div class="mode-badge m-{{ m }}">
+      {% if m == 'all' %}🔍 Full Scrape{% elif m == 'stock' %}📦 Stock Only{% elif m == 'images' %}🖼 Images Only{% elif m == 'prices' %}💰 Prices Only{% endif %}
+      · {{ state.total }} products · {{ state.last_run[:10] if state.last_run else '' }}
+    </div>
+    {% endif %}
+
+    <!-- Stats -->
+    <div class="stats-grid">
+      <div class="stat-card s-total">
+        <div class="stat-num" id="statTotal">{{ state.total or 0 }}</div>
+        <div class="stat-label">Total Checked</div>
+      </div>
+      <div class="stat-card s-found" style="cursor:pointer" onclick="filterTab('found')">
+        <div class="stat-num s-found" id="statFound">{{ state.found or 0 }}</div>
+        <div class="stat-label">Found</div>
+      </div>
+      <div class="stat-card s-missing" style="cursor:pointer" onclick="filterTab('missing')">
+        <div class="stat-num s-missing" id="statMissing">{{ state.not_found or 0 }}</div>
+        <div class="stat-label">Not Found</div>
+      </div>
+      {% if (state.mode or 'all') in ('all', 'stock') %}
+      <div class="stat-card s-nostock" style="cursor:pointer" onclick="filterTab('nostock')">
+        <div class="stat-num s-nostock" id="statNoStock">{{ state.no_stock or 0 }}</div>
+        <div class="stat-label">Out of Stock</div>
+      </div>
+      {% else %}
+      <div class="stat-card s-noimg" style="cursor:pointer" onclick="filterTab('noimg')">
+        <div class="stat-num s-noimg" id="statNoImg">{{ state.no_image or 0 }}</div>
+        <div class="stat-label">Missing Images</div>
+      </div>
+      {% endif %}
+      <div class="stat-card s-total">
+        <div class="stat-num" id="statError">{{ state.errors or 0 }}</div>
+        <div class="stat-label">Errors</div>
+      </div>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="toolbar">
+      <div class="filter-tabs">
+        <button class="tab active" id="tab-all"     onclick="filterTab('all')">All</button>
+        <button class="tab"        id="tab-found"   onclick="filterTab('found')">Found</button>
+        <button class="tab"        id="tab-missing" onclick="filterTab('missing')">Not Found</button>
+        {% if (state.mode or 'all') in ('all','stock') %}
+        <button class="tab"        id="tab-nostock" onclick="filterTab('nostock')">Out of Stock</button>
+        {% endif %}
+        {% if (state.mode or 'all') in ('all','images') %}
+        <button class="tab"        id="tab-noimg"   onclick="filterTab('noimg')">No Images</button>
+        {% endif %}
+        <button class="tab"        id="tab-error"   onclick="filterTab('error')">Errors</button>
+      </div>
+      <div class="toolbar-right">
+        <div class="search-wrap">
+          <span class="search-icon">🔍</span>
+          <input type="text" placeholder="Search…" id="searchInput" oninput="applySearch()">
+        </div>
+        {% if state.results %}
+        <a href="/download" class="download-btn">⬇ CSV</a>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Table -->
+    <div class="table-wrap">
+      {% if state.results %}
+      <div class="table-scroll">
+        <table id="resultsTable">
+          <thead>
+            <tr>
+              <th onclick="sortBy(0)">Product ID ↕</th>
+              <th onclick="sortBy(1)">Status ↕</th>
+              <th onclick="sortBy(2)">Brand ↕</th>
+              <th onclick="sortBy(3)">Product Name ↕</th>
+              {% set m = state.mode or 'all' %}
+              {% if m in ('all','stock') %}
+              <th>In Stock</th>
+              <th>Qty</th>
+              <th>Button</th>
+              {% endif %}
+              {% if m in ('all','prices') %}
+              <th>Was</th>
+              <th>Now</th>
+              {% endif %}
+              {% if m in ('all','images') %}
+              <th>Images</th>
+              {% endif %}
+              {% if m == 'all' %}
+              <th>Category</th>
+              {% endif %}
+              <th>Link</th>
+              {% set hdrs = state.headers %}
+              {% if hdrs and hdrs|length > 1 %}
+                {% for h in hdrs[1:5] %}{% if h %}<th>{{ h }}</th>{% endif %}{% endfor %}
+              {% endif %}
+            </tr>
+          </thead>
+          <tbody id="tableBody">
+            {% for r in state.results %}
+            {% set s = r.status %}
+            {% if s == 'Found' %}{% set cls='r-found' %}{% set badge='badge-found' %}{% set lbl='Found' %}
+            {% elif s == 'Not Found' %}{% set cls='r-missing' %}{% set badge='badge-missing' %}{% set lbl='Not Found' %}
+            {% elif 'No Details' in s %}{% set cls='' %}{% set badge='badge-nodetail' %}{% set lbl='No Details' %}
+            {% elif s in ('Error','Timeout','Connection Error') %}{% set cls='r-error' %}{% set badge='badge-error' %}{% set lbl=s %}
+            {% else %}{% set cls='' %}{% set badge='badge-other' %}{% set lbl=s %}{% endif %}
+            {% set m = state.mode or 'all' %}
+            <tr class="{{ cls }}"
+                data-pid="{{ r.product_id }}"
+                data-status="{{ s }}"
+                data-instock="{{ 'yes' if r.get('in_stock') else 'no' }}"
+                data-hasimg="{{ 'yes' if r.get('has_images') else 'no' }}">
+              <td><span class="pid">{{ r.product_id }}</span></td>
+              <td><span class="badge {{ badge }}">{{ lbl }}</span></td>
+              <td style="font-size:12px;color:var(--text2);font-weight:500">{{ r.brand or '—' }}</td>
+              <td style="font-weight:500;max-width:200px">{{ (r.name or '—')[:60] }}</td>
+              {% if m in ('all','stock') %}
+              <td>
+                {% if r.get('in_stock') is not none %}
+                  {% if r.get('in_stock') %}
+                    <span class="stock-pill in">✓ In Stock</span>
+                  {% else %}
+                    <span class="stock-pill out">✗ Sold Out</span>
+                  {% endif %}
+                {% else %}—{% endif %}
+              </td>
+              <td style="font-family:monospace;font-size:12px">{{ r.stock_qty if r.get('stock_qty') else '—' }}</td>
+              <td style="font-size:11px;color:var(--text3)">{{ r.button_label or '—' }}</td>
+              {% endif %}
+              {% if m in ('all','prices') %}
+              <td><span class="price-was">{{ r.original_price or '' }}</span></td>
+              <td><span class="price-now">{{ r.sale_price or '—' }}</span></td>
+              {% endif %}
+              {% if m in ('all','images') %}
+              <td>
+                {% if r.get('has_images') %}
+                  <span class="img-pill yes">✓ <span style="color:var(--text3);font-size:10px">{{ r.image_count }}</span></span>
+                {% else %}
+                  <span class="img-pill no">✗ None</span>
+                {% endif %}
+              </td>
+              {% endif %}
+              {% if m == 'all' %}
+              <td style="font-size:12px;color:var(--text2)">{{ r.category or '—' }}</td>
+              {% endif %}
+              <td><a href="{{ r.url }}" target="_blank" class="link-btn">View ↗</a></td>
+              {% if r.extra %}
+                {% set hdrs = state.headers %}
+                {% for e in r.extra[:4] %}
+                  {% if hdrs and loop.index < hdrs|length and hdrs[loop.index] %}
+                    <td style="font-size:12px;color:var(--text2)">{{ e or '—' }}</td>
+                  {% endif %}
+                {% endfor %}
+              {% endif %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty-state">
+        <div class="empty-icon">📦</div>
+        <div class="empty-title">No results yet</div>
+        <div>Select a mode, upload your Excel file, and click Run Now.</div>
+      </div>
+      {% endif %}
+    </div>
+
+  </main>
+</div>
+
+<!-- Clear confirm dialog -->
+<div class="confirm-overlay" id="confirmOverlay">
+  <div class="confirm-box">
+    <h3>🗑 Clear Results?</h3>
+    <p>This will delete all current results from memory. Your uploaded file will be kept. You can run again anytime.</p>
+    <div class="confirm-actions">
+      <button class="btn btn-secondary" onclick="hideClear()">Cancel</button>
+      <button class="btn btn-danger" onclick="clearResults()">Yes, Clear</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast">
+  <span class="toast-icon"></span>
+  <span class="toast-msg" id="toastMsg"></span>
+</div>
+
+<script>
+  // ── Mode selector ────────────────────────────────────────────────────────────
+  document.querySelectorAll('input[name="mode"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      document.querySelectorAll('.mode-card').forEach(c => c.classList.remove('active'));
+      radio.closest('.mode-card').classList.add('active');
+    });
+  });
+
+  function getMode() {
+    return document.querySelector('input[name="mode"]:checked')?.value || 'all';
+  }
+
+  // ── File upload ──────────────────────────────────────────────────────────────
+  const dropZone  = document.getElementById('dropZone');
+  const fileInput = document.getElementById('fileInput');
+  const fileBadge = document.getElementById('fileBadge');
+  const fileName  = document.getElementById('fileName');
+  const fileCount = document.getElementById('fileCount');
+
+  ['dragover','dragenter'].forEach(e => {
+    dropZone.addEventListener(e, ev => { ev.preventDefault(); dropZone.classList.add('dragover'); });
+  });
+  ['dragleave','drop'].forEach(e => {
+    dropZone.addEventListener(e, ev => { ev.preventDefault(); dropZone.classList.remove('dragover'); });
+  });
+  dropZone.addEventListener('drop', ev => { const f = ev.dataTransfer.files[0]; if (f) uploadFile(f); });
+  fileInput.addEventListener('change', () => { if (fileInput.files[0]) uploadFile(fileInput.files[0]); });
+
+  function uploadFile(file) {
+    showToast('info', `Uploading ${file.name}…`);
+    const fd = new FormData();
+    fd.append('file', file);
+    fetch('/upload', { method: 'POST', body: fd })
+      .then(r => r.json())
+      .then(d => {
+        if (d.error) { showToast('error', d.error); return; }
+        fileName.textContent = file.name;
+        fileCount.textContent = `${d.count} products detected`;
+        fileBadge.classList.add('visible');
+        showToast('success', `${d.count} products loaded`);
+      })
+      .catch(() => showToast('error', 'Upload failed'));
+  }
+
+  // ── Run ──────────────────────────────────────────────────────────────────────
+  function runCheck() {
+    const btn     = document.getElementById('runBtn');
+    const spinner = document.getElementById('runSpinner');
+    const btnText = document.getElementById('runBtnText');
+    const status  = document.getElementById('runStatus');
+    const dot     = document.getElementById('statusDot');
+    const mode    = getMode();
+
+    btn.disabled = true;
+    spinner.classList.add('active');
+    btnText.textContent = 'Running…';
+    status.classList.add('visible');
+    dot.classList.remove('idle');
+
+    fetch('/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode }),
+    })
+      .then(r => r.json())
+      .then(d => {
+        if (d.error) { showToast('error', d.error); }
+        else {
+          showToast('success', `Done — ${d.found} found, ${d.not_found} not found`);
+          setTimeout(() => location.reload(), 1200);
+        }
+      })
+      .catch(() => showToast('error', 'Run failed'))
+      .finally(() => {
+        btn.disabled = false;
+        spinner.classList.remove('active');
+        btnText.textContent = '▶ Run Now';
+        status.classList.remove('visible');
+        dot.classList.add('idle');
+      });
+  }
+
+  // ── Clear ────────────────────────────────────────────────────────────────────
+  function showClear() { document.getElementById('confirmOverlay').classList.add('show'); }
+  function hideClear() { document.getElementById('confirmOverlay').classList.remove('show'); }
+  function clearResults() {
+    hideClear();
+    fetch('/clear', { method: 'POST' })
+      .then(r => r.json())
+      .then(() => { showToast('success', 'Results cleared'); setTimeout(() => location.reload(), 800); })
+      .catch(() => showToast('error', 'Clear failed'));
+  }
+
+  // ── Settings ─────────────────────────────────────────────────────────────────
+  function toggleSettings() {
+    document.getElementById('settingsToggle').classList.toggle('open');
+    document.getElementById('settingsContent').classList.toggle('open');
+  }
+
+  let saveTimer;
+  function saveConfig() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      const h = document.getElementById('schedHour').value;
+      const m = document.getElementById('schedMin').value;
+      document.getElementById('scheduleDisplay').textContent =
+        h.toString().padStart(2,'0') + ':' + m.toString().padStart(2,'0');
+      const payload = {
+        email_to:        document.getElementById('emailTo').value,
+        email_from:      document.getElementById('emailFrom').value,
+        schedule_hour:   h,
+        schedule_minute: m,
+        send_email:      document.getElementById('sendEmailToggle').checked ? 'true' : 'false',
+        default_mode:    getMode(),
+      };
+      const pass = document.getElementById('emailPass').value;
+      if (pass) payload.email_password = pass;
+      fetch('/save-config', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }).then(r => r.json()).then(d => { if (d.success) showToast('success', 'Settings saved'); });
+    }, 600);
+  }
+
+  // ── Filtering ────────────────────────────────────────────────────────────────
+  let currentFilter = 'all';
+  let currentSearch = '';
+
+  function filterTab(filter) {
+    currentFilter = filter;
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    const el = document.getElementById('tab-' + filter);
+    if (el) el.classList.add('active');
+    applyFilter();
+  }
+
+  function applySearch() {
+    currentSearch = document.getElementById('searchInput').value.toLowerCase();
+    applyFilter();
+  }
+
+  function applyFilter() {
+    document.querySelectorAll('#tableBody tr').forEach(row => {
+      const status  = row.dataset.status || '';
+      const inStock = row.dataset.instock;
+      const hasImg  = row.dataset.hasimg;
+      const text    = row.textContent.toLowerCase();
+      let show = true;
+
+      if (currentFilter === 'found')   show = status === 'Found';
+      if (currentFilter === 'missing') show = status === 'Not Found';
+      if (currentFilter === 'nostock') show = status === 'Found' && inStock === 'no';
+      if (currentFilter === 'noimg')   show = status === 'Found' && hasImg === 'no';
+      if (currentFilter === 'error')   show = ['Error','Timeout','Connection Error'].includes(status);
+
+      if (show && currentSearch) show = text.includes(currentSearch);
+      row.classList.toggle('hidden-row', !show);
+    });
+  }
+
+  // ── Sort ─────────────────────────────────────────────────────────────────────
+  let sortDir = {};
+  function sortBy(idx) {
+    const tbody = document.getElementById('tableBody');
+    if (!tbody) return;
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    sortDir[idx] = !sortDir[idx];
+    rows.sort((a, b) => {
+      const av = a.cells[idx]?.textContent.trim() || '';
+      const bv = b.cells[idx]?.textContent.trim() || '';
+      return sortDir[idx]
+        ? av.localeCompare(bv, undefined, { numeric: true })
+        : bv.localeCompare(av, undefined, { numeric: true });
+    });
+    rows.forEach(r => tbody.appendChild(r));
+  }
+
+  // ── Toast ────────────────────────────────────────────────────────────────────
+  let toastTimer;
+  function showToast(type, msg) {
+    const toast = document.getElementById('toast');
+    toast.className = `toast ${type}`;
+    document.getElementById('toastMsg').textContent = msg;
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), 4000);
+  }
+</script>
+</body>
+</html>
