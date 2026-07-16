@@ -4,6 +4,7 @@ import io
 import csv
 import logging
 import tempfile
+import threading
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -204,28 +205,22 @@ def upload():
         return jsonify({'error': f'Could not read file: {str(e)}'}), 400
 
 
+
 @app.route('/run', methods=['POST'])
 def run_now():
-    try:
-        data = request.json or {}
-        mode = data.get('mode', 'all')
-        if mode not in MODES:
-            mode = 'all'
-        state = run_checker(mode)
-        if state is None:
-            return jsonify({'error': 'Upload a file first, or file contains no products'}), 400
-        return jsonify({
-            'success':   True,
-            'total':     state['total'],
-            'found':     state['found'],
-            'not_found': state['not_found'],
-            'errors':    state['errors'],
-            'no_image':  state['no_image'],
-            'no_stock':  state.get('no_stock', 0),
-        })
-    except Exception as e:
-        logger.exception("run_now failed")
-        return jsonify({'error': str(e)}), 500
+    data = request.json or {}
+    mode = data.get('mode', 'all')
+    if mode not in MODES:
+        mode = 'all'
+    if not os.path.exists(UPLOAD_FILE):
+        return jsonify({'error': 'Upload a file first'}), 400
+
+    def bg():
+        run_checker(mode)
+
+    t = threading.Thread(target=bg, daemon=True)
+    t.start()
+    return jsonify({'success': True, 'running': True})
 
 
 @app.route('/results')
