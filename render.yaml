@@ -3,7 +3,7 @@ services:
     name: product-availability-checker
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --workers 1 --timeout 120
+    startCommand: gunicorn app:app --workers 1 --timeout 300
     envVars:
       - key: EMAIL_TO
         sync: false
