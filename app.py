@@ -74,21 +74,25 @@ def save_config(cfg):
 # ── Excel reading ─────────────────────────────────────────────────────────────
 
 def read_excel(filepath):
-    wb = openpyxl.load_workbook(filepath)
+    wb = openpyxl.load_workbook(filepath, read_only=True, data_only=True)
     ws = wb.active
     products = []
     headers  = []
     for row_idx, row in enumerate(ws.iter_rows(values_only=True)):
-        if not row or row[0] is None:
+        try:
+            if not row or row[0] is None:
+                continue
+            first = str(row[0]).strip().lower()
+            if row_idx == 0 and first in ('product id', 'productid', 'product_id', 'id', 'sku', 'barcode'):
+                headers = [str(c) if c else '' for c in row]
+                continue
+            products.append({
+                'id':    row[0],
+                'extra': [str(c) if c is not None else '' for c in list(row[1:5])],
+            })
+        except Exception:
             continue
-        first = str(row[0]).strip().lower()
-        if row_idx == 0 and first in ('product id', 'productid', 'product_id', 'id', 'sku', 'barcode'):
-            headers = [str(c) if c else '' for c in row]
-            continue
-        products.append({
-            'id':    row[0],
-            'extra': [str(c) if c is not None else '' for c in list(row[1:5])],
-        })
+    wb.close()
     if not headers and products:
         headers = ['Product ID', 'Col 2', 'Col 3', 'Col 4', 'Col 5']
     return products, headers
