@@ -626,41 +626,63 @@
 
   // ── Run ──────────────────────────────────────────────────────────────────────
   function runCheck() {
-    const btn     = document.getElementById('runBtn');
-    const spinner = document.getElementById('runSpinner');
-    const btnText = document.getElementById('runBtnText');
-    const status  = document.getElementById('runStatus');
-    const dot     = document.getElementById('statusDot');
-    const mode    = getMode();
+  const btn     = document.getElementById('runBtn');
+  const spinner = document.getElementById('runSpinner');
+  const btnText = document.getElementById('runBtnText');
+  const status  = document.getElementById('runStatus');
+  const dot     = document.getElementById('statusDot');
+  const mode    = getMode();
 
-    btn.disabled = true;
-    spinner.classList.add('active');
-    btnText.textContent = 'Running…';
-    status.classList.add('visible');
-    dot.classList.remove('idle');
+  btn.disabled = true;
+  spinner.classList.add('active');
+  btnText.textContent = 'Running…';
+  status.classList.add('visible');
+  dot.classList.remove('idle');
 
-    fetch('/run', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode }),
-    })
+  fetch('/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode }),
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (d.error) {
+      showToast('error', d.error);
+      btn.disabled = false;
+      spinner.classList.remove('active');
+      btnText.textContent = '▶ Run Now';
+      status.classList.remove('visible');
+      dot.classList.add('idle');
+    } else {
+      showToast('info', 'Check started — results update every 30s');
+      pollResults();
+    }
+  })
+  .catch(() => showToast('error', 'Run failed'));
+}
+
+function pollResults() {
+  setTimeout(() => {
+    fetch('/results')
       .then(r => r.json())
       .then(d => {
-        if (d.error) { showToast('error', d.error); }
-        else {
+        document.getElementById('statTotal').textContent  = d.total  || 0;
+        document.getElementById('statFound').textContent  = d.found  || 0;
+        document.getElementById('statMissing').textContent= d.not_found || 0;
+        document.getElementById('statError').textContent  = d.errors || 0;
+        if (d.partial) {
+          showToast('info', `Progress: ${d.total} checked so far…`);
+          pollResults();
+        } else if (d.total > 0) {
           showToast('success', `Done — ${d.found} found, ${d.not_found} not found`);
-          setTimeout(() => location.reload(), 1200);
+          setTimeout(() => location.reload(), 1500);
+        } else {
+          pollResults();
         }
       })
-      .catch(() => showToast('error', 'Run failed'))
-      .finally(() => {
-        btn.disabled = false;
-        spinner.classList.remove('active');
-        btnText.textContent = '▶ Run Now';
-        status.classList.remove('visible');
-        dot.classList.add('idle');
-      });
-  }
+      .catch(() => pollResults());
+  }, 30000);
+}
 
   // ── Clear ────────────────────────────────────────────────────────────────────
   function showClear() { document.getElementById('confirmOverlay').classList.add('show'); }
