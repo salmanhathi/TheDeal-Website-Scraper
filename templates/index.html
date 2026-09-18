@@ -31,10 +31,10 @@
   body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text1); min-height: 100vh; font-size: 14px; line-height: 1.5; }
 
   /* Header */
-  .header { background: var(--night); padding: 0 32px; display: flex; align-items: center; height: 60px; position: sticky; top: 0; z-index: 100; border-bottom: 1px solid rgba(255,255,255,.06); }
+  .header { background: #ffffff; padding: 0 32px; display: flex; align-items: center; height: 60px; position: sticky; top: 0; z-index: 100; border-bottom: 3px solid #0f172a; }
   .header-logo img { height: 30px; display: block; }
-  .header-divider { width: 1px; height: 24px; background: rgba(255,255,255,.12); margin: 0 18px; }
-  .header-title { font-family: 'Space Grotesk', sans-serif; font-size: 14px; font-weight: 600; color: #fff; }
+  .header-divider { width: 1px; height: 24px; background: rgba(0,0,0,.15); margin: 0 18px; }
+  .header-title { font-family: 'Space Grotesk', sans-serif; font-size: 14px; font-weight: 600; color: #0f172a; }
   .header-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
   .last-run { font-size: 11px; color: var(--text3); display: flex; align-items: center; gap: 6px; }
   .pulse-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); display: inline-block; }
@@ -61,6 +61,17 @@
   .mode-label { font-size: 11px; font-weight: 600; color: var(--text2); display: block; }
   .mode-desc { font-size: 10px; color: var(--text3); margin-top: 2px; display: block; }
   .mode-card.active .mode-label { color: var(--orange); }
+
+  /* Country selector */
+  .country-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .country-card { border: 2px solid var(--border); border-radius: 8px; padding: 10px; cursor: pointer; transition: all .15s; text-align: center; }
+  .country-card:hover { border-color: var(--blue); background: #eff6ff; }
+  .country-card.active { border-color: var(--blue); background: #eff6ff; }
+  .country-card input { display: none; }
+  .country-flag { font-size: 22px; margin-bottom: 4px; }
+  .country-label { font-size: 11px; font-weight: 600; color: var(--text2); display: block; }
+  .country-desc { font-size: 10px; color: var(--text3); margin-top: 2px; display: block; }
+  .country-card.active .country-label { color: var(--blue); }
 
   /* Upload */
   .drop-zone { border: 2px dashed var(--border); border-radius: 8px; padding: 24px 16px; text-align: center; cursor: pointer; transition: border-color .2s, background .2s; position: relative; }
@@ -233,6 +244,9 @@
   <div class="header-divider"></div>
   <div class="header-title">Product Availability Checker</div>
   <div class="header-right">
+    {% if state.results %}
+    <button onclick="showClear()" style="background:#ef4444;color:#fff;border:none;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">🗑 Clear</button>
+    {% endif %}
     <div class="last-run" id="lastRunBadge">
       <span class="pulse-dot idle" id="statusDot"></span>
       <span id="lastRunText">
@@ -283,6 +297,27 @@
             <span class="mode-desc">Was / Now</span>
           </label>
 
+        </div>
+      </div>
+    </div>
+
+    <!-- Country selector -->
+    <div class="card">
+      <div class="card-header">🌍 Country</div>
+      <div class="card-body">
+        <div class="country-grid" id="countryGrid">
+          <label class="country-card active" id="cc-ae">
+            <input type="radio" name="country" value="ae" checked>
+            <div class="country-flag">🇦🇪</div>
+            <span class="country-label">UAE</span>
+            <span class="country-desc">ae-en</span>
+          </label>
+          <label class="country-card" id="cc-sa">
+            <input type="radio" name="country" value="sa">
+            <div class="country-flag">🇸🇦</div>
+            <span class="country-label">KSA</span>
+            <span class="country-desc">sa-en</span>
+          </label>
         </div>
       </div>
     </div>
@@ -592,6 +627,18 @@
     return document.querySelector('input[name="mode"]:checked')?.value || 'all';
   }
 
+  // ── Country selector ────────────────────────────────────────────────────────
+  document.querySelectorAll('input[name="country"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      document.querySelectorAll('.country-card').forEach(c => c.classList.remove('active'));
+      radio.closest('.country-card').classList.add('active');
+    });
+  });
+
+  function getCountry() {
+    return document.querySelector('input[name="country"]:checked')?.value || 'ae';
+  }
+
   // ── File upload ──────────────────────────────────────────────────────────────
   const dropZone  = document.getElementById('dropZone');
   const fileInput = document.getElementById('fileInput');
@@ -626,63 +673,41 @@
 
   // ── Run ──────────────────────────────────────────────────────────────────────
   function runCheck() {
-  const btn     = document.getElementById('runBtn');
-  const spinner = document.getElementById('runSpinner');
-  const btnText = document.getElementById('runBtnText');
-  const status  = document.getElementById('runStatus');
-  const dot     = document.getElementById('statusDot');
-  const mode    = getMode();
+    const btn     = document.getElementById('runBtn');
+    const spinner = document.getElementById('runSpinner');
+    const btnText = document.getElementById('runBtnText');
+    const status  = document.getElementById('runStatus');
+    const dot     = document.getElementById('statusDot');
+    const mode    = getMode();
 
-  btn.disabled = true;
-  spinner.classList.add('active');
-  btnText.textContent = 'Running…';
-  status.classList.add('visible');
-  dot.classList.remove('idle');
+    btn.disabled = true;
+    spinner.classList.add('active');
+    btnText.textContent = 'Running…';
+    status.classList.add('visible');
+    dot.classList.remove('idle');
 
-  fetch('/run', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode }),
-  })
-  .then(r => r.json())
-  .then(d => {
-    if (d.error) {
-      showToast('error', d.error);
-      btn.disabled = false;
-      spinner.classList.remove('active');
-      btnText.textContent = '▶ Run Now';
-      status.classList.remove('visible');
-      dot.classList.add('idle');
-    } else {
-      showToast('info', 'Check started — results update every 30s');
-      pollResults();
-    }
-  })
-  .catch(() => showToast('error', 'Run failed'));
-}
-
-function pollResults() {
-  setTimeout(() => {
-    fetch('/results')
+    fetch('/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode, country: getCountry() }),
+    })
       .then(r => r.json())
       .then(d => {
-        document.getElementById('statTotal').textContent  = d.total  || 0;
-        document.getElementById('statFound').textContent  = d.found  || 0;
-        document.getElementById('statMissing').textContent= d.not_found || 0;
-        document.getElementById('statError').textContent  = d.errors || 0;
-        if (d.partial) {
-          showToast('info', `Progress: ${d.total} checked so far…`);
-          pollResults();
-        } else if (d.total > 0) {
+        if (d.error) { showToast('error', d.error); }
+        else {
           showToast('success', `Done — ${d.found} found, ${d.not_found} not found`);
-          setTimeout(() => location.reload(), 1500);
-        } else {
-          pollResults();
+          setTimeout(() => location.reload(), 1200);
         }
       })
-      .catch(() => pollResults());
-  }, 30000);
-}
+      .catch(() => showToast('error', 'Run failed'))
+      .finally(() => {
+        btn.disabled = false;
+        spinner.classList.remove('active');
+        btnText.textContent = '▶ Run Now';
+        status.classList.remove('visible');
+        dot.classList.add('idle');
+      });
+  }
 
   // ── Clear ────────────────────────────────────────────────────────────────────
   function showClear() { document.getElementById('confirmOverlay').classList.add('show'); }
@@ -694,6 +719,10 @@ function pollResults() {
       .then(() => { showToast('success', 'Results cleared'); setTimeout(() => location.reload(), 800); })
       .catch(() => showToast('error', 'Clear failed'));
   }
+	  // Ctrl+Shift+X to clear
+	document.addEventListener('keydown', e => {
+	  if (e.ctrlKey && e.shiftKey && e.key === 'X') showClear();
+	});
 
   // ── Settings ─────────────────────────────────────────────────────────────────
   function toggleSettings() {
