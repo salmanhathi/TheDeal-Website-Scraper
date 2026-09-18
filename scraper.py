@@ -1,14 +1,31 @@
 import re
 import json
 import asyncio
-import aiohttp
+import sys
+import time
+import logging
 import urllib3
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor
 
+logger = logging.getLogger(__name__)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-BASE_URL = "https://www.thedealoutlet.com/ae-en/{}.html"
+# Windows needs SelectorEventLoop for aiohttp to work properly
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+try:
+    import aiohttp
+    AIOHTTP_AVAILABLE = True
+except ImportError:
+    AIOHTTP_AVAILABLE = False
+
+BASE_URLS = {
+    'ae': "https://www.thedealoutlet.com/ae-en/{}.html",
+    'sa': "https://www.thedealoutlet.com/sa-en/{}.html",
+}
+BASE_URL = BASE_URLS['ae']  # default, kept for debug route compatibility
 
 HEADERS = {
     "User-Agent": (
@@ -27,11 +44,18 @@ PLACEHOLDER_SIGNALS = [
     '/dw58870029/', 'blank.gif', '1x1', 'pixel',
 ]
 
-CONCURRENCY  = 80
-TIMEOUT_SEC  = 15
-RETRY_STATUSES = {'Timeout', 'Connection Error', 'Error', 'HTTP 429', 'HTTP 500', 'HTTP 409'}
-MAX_RETRIES    = 4
-RETRY_DELAYS   = [5, 15, 30, 60]
+# ── Tuning ────────────────────────────────────────────────────────────────────
+CONCURRENCY    = 120   # simultaneous connections
+TIMEOUT_SEC    = 12    # per-request timeout (fail fast)
+PARSE_WORKERS  = 10    # threads for BeautifulSoup parsing
+CHUNK_SIZE     = 500   # save to disk every N products
+RETRY_DELAY_1  = 10    # seconds before first retry pass
+RETRY_DELAY_2  = 30    # seconds before second retry pass
+RETRY_STATUSES = {
+    'Timeout', 'Connection Error', 'Error',
+    'HTTP 429', 'HTTP 500', 'HTTP 409', 'HTTP 503', 'HTTP 502',
+}
+MODES = ('all', 'stock', 'images', 'prices')
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -47,6 +71,7 @@ def is_placeholder(src):
     return any(p in (src or '').lower() for p in PLACEHOLDER_SIGNALS)
 
 def make_session():
+    """For debug route only."""
     import requests
     from requests.adapters import HTTPAdapter
     s = requests.Session()
@@ -133,31 +158,22 @@ def extract_prices(soup):
 
 
 def extract_stock(soup):
-    """Returns (in_stock: bool, stock_qty: int|None, button_label: str)"""
     in_stock = None
     stock_qty = None
     button_label = ''
-
-    # Primary: data-available attribute
     avail_el = soup.select_one('.js-availability-container')
     if avail_el:
-        data_available = avail_el.get('data-available', '').lower()
-        if data_available == 'true':
+        da = avail_el.get('data-available', '').lower()
+        if da == 'true':
             in_stock = True
-        elif data_available == 'false':
+        elif da == 'false':
             in_stock = False
-
-    # Add to cart button text & disabled state
     cart_btn = soup.select_one('.js-add-to-cart.add-to-cart')
     if cart_btn:
         button_label = cart_btn.get_text(strip=True)
         if in_stock is None:
-            if 'sold out' in button_label.lower() or cart_btn.get('disabled') is not None:
-                in_stock = False
-            else:
-                in_stock = True
-
-    # Bonus: GTM JSON
+            in_stock = False if ('sold out' in button_label.lower() or
+                                  cart_btn.get('disabled') is not None) else True
     if in_stock is None:
         gtm_btn = soup.select_one('.js-add-to-cart[data-gtm-enhancedecommerce-onclick]')
         if gtm_btn:
@@ -168,8 +184,6 @@ def extract_stock(soup):
                     in_stock = bool(items[0]['item_in_stock'])
             except Exception:
                 pass
-
-    # Quantity select
     qty_select = soup.select_one('.js-quantity-select, select.quantity-select')
     if qty_select:
         options = qty_select.find_all('option')
@@ -180,10 +194,13 @@ def extract_stock(soup):
                 stock_qty = len(options)
         if in_stock is None:
             in_stock = True
-
     if in_stock is None:
-        in_stock = False
-
+        in_stock = False       
+    # Override button label based on data-available (JS changes it dynamically)
+    if in_stock is True:
+        button_label = 'Add to Bag'
+    elif in_stock is False:
+        button_label = 'Sold Out'
     return in_stock, stock_qty, button_label
 
 
@@ -212,8 +229,7 @@ def extract_images(soup):
     if not images:
         for sel in ['.product-images-desktop img', '.js-img-parent-div img',
                     '.primary-images img', '.pdp-images img',
-                    '.image-container img', '.product-gallery img',
-                    '.carousel img', '.slick-slide img']:
+                    '.image-container img', '.product-gallery img']:
             for tag in soup.select(sel):
                 add(src_of(tag))
             if images:
@@ -242,34 +258,23 @@ def extract_category(soup):
     return None
 
 
-# ── Mode-aware HTML parser ────────────────────────────────────────────────────
-
-MODES = ('all', 'stock', 'images', 'prices')
+# ── Result builder ────────────────────────────────────────────────────────────
 
 def empty_result(padded_id, url):
     return {
-        'product_id':     padded_id,
-        'url':            url,
-        'status':         'Unknown',
-        'name':           '',
-        'brand':          '',
-        'category':       '',
-        'original_price': '',
-        'sale_price':     '',
-        'in_stock':       None,
-        'stock_qty':      None,
-        'button_label':   '',
-        'has_images':     False,
-        'image_count':    0,
-        'error':          '',
+        'product_id': padded_id, 'url': url, 'country': 'ae',
+        'status': 'Unknown', 'name': '', 'brand': '', 'category': '',
+        'original_price': '', 'sale_price': '',
+        'in_stock': None, 'stock_qty': None, 'button_label': '',
+        'has_images': False, 'image_count': 0, 'error': '',
     }
 
 
 def parse_html(html, padded_id, url, mode='all'):
     result = empty_result(padded_id, url)
+    result['country'] = 'sa' if '/sa-en/' in url else 'ae'
     soup = BeautifulSoup(html, 'lxml')
 
-    # Soft-404 detection
     canonical = soup.find('link', rel='canonical')
     final_url = canonical['href'] if canonical and canonical.get('href') else url
     if 'search' in final_url or final_url.rstrip('/') == 'https://www.thedealoutlet.com/ae-en':
@@ -280,62 +285,48 @@ def parse_html(html, padded_id, url, mode='all'):
         result['status'] = 'Not Found'
         return result
 
-    currency = 'AED'
+    country_default = {'ae': 'AED', 'sa': 'SAR'}
+    currency = country_default.get(result.get('country', 'ae'), 'AED')
     cur_el = soup.select_one('meta[itemprop="priceCurrency"]')
     if cur_el and cur_el.get('content'):
         currency = cur_el['content']
 
+    # Always get name + brand regardless of mode
+    result['name']  = extract_title(soup) or ''
+    result['brand'] = extract_brand(soup) or ''
+
+    if mode in ('all', 'prices'):
+        prices = extract_prices(soup)
+        if prices['sale_price']:
+            result['sale_price'] = f"{currency} {prices['sale_price']}"
+        if prices['original_price']:
+            result['original_price'] = f"{currency} {prices['original_price']}"
+
+    if mode in ('all', 'stock'):
+        in_stock, qty, btn = extract_stock(soup)
+        result['in_stock']     = in_stock
+        result['stock_qty']    = qty
+        result['button_label'] = btn
+
+    if mode in ('all', 'images'):
+        imgs = extract_images(soup)
+        result['has_images']  = len(imgs) > 0
+        result['image_count'] = len(imgs)
+
     if mode == 'all':
-        result['name']     = extract_title(soup) or ''
-        result['brand']    = extract_brand(soup) or ''
         result['category'] = extract_category(soup) or ''
-        prices = extract_prices(soup)
-        if prices['sale_price']:
-            result['sale_price'] = f"{currency} {prices['sale_price']}"
-        if prices['original_price']:
-            result['original_price'] = f"{currency} {prices['original_price']}"
-        in_stock, qty, btn = extract_stock(soup)
-        result['in_stock']     = in_stock
-        result['stock_qty']    = qty
-        result['button_label'] = btn
-        imgs = extract_images(soup)
-        result['has_images']  = len(imgs) > 0
-        result['image_count'] = len(imgs)
-
-    elif mode == 'stock':
-        result['name']  = extract_title(soup) or ''
-        result['brand'] = extract_brand(soup) or ''
-        in_stock, qty, btn = extract_stock(soup)
-        result['in_stock']     = in_stock
-        result['stock_qty']    = qty
-        result['button_label'] = btn
-
-    elif mode == 'images':
-        result['name']  = extract_title(soup) or ''
-        result['brand'] = extract_brand(soup) or ''
-        imgs = extract_images(soup)
-        result['has_images']  = len(imgs) > 0
-        result['image_count'] = len(imgs)
-
-    elif mode == 'prices':
-        result['name']  = extract_title(soup) or ''
-        result['brand'] = extract_brand(soup) or ''
-        prices = extract_prices(soup)
-        if prices['sale_price']:
-            result['sale_price'] = f"{currency} {prices['sale_price']}"
-        if prices['original_price']:
-            result['original_price'] = f"{currency} {prices['original_price']}"
 
     result['status'] = 'Found' if result['name'] else 'Found (No Details)'
     return result
 
 
-# ── Async core ────────────────────────────────────────────────────────────────
+# ── Async engine ──────────────────────────────────────────────────────────────
 
-async def fetch_one(session, semaphore, product_id, parse_pool, mode):
+async def _fetch_one(session, semaphore, product_id, parse_pool, mode, country='ae'):
     padded_id = pad_product_id(str(product_id))
-    url = BASE_URL.format(padded_id)
+    url = BASE_URLS.get(country, BASE_URLS['ae']).format(padded_id)
     result = empty_result(padded_id, url)
+    result['country'] = 'sa' if '/sa-en/' in url else 'ae'
 
     async with semaphore:
         try:
@@ -362,25 +353,35 @@ async def fetch_one(session, semaphore, product_id, parse_pool, mode):
     return result
 
 
-async def scrape_all_async(product_ids, mode='all', progress_callback=None):
-    timeout    = aiohttp.ClientTimeout(total=TIMEOUT_SEC)
-    semaphore  = asyncio.Semaphore(CONCURRENCY)
-    connector  = aiohttp.TCPConnector(limit=CONCURRENCY + 20, ssl=False)
+async def _run_pass(product_ids, mode, country='ae', label='Pass 1'):
+    """Run one async scraping pass — no retries, just speed."""
+    timeout   = aiohttp.ClientTimeout(total=TIMEOUT_SEC)
+    semaphore = asyncio.Semaphore(CONCURRENCY)
+    connector = aiohttp.TCPConnector(
+        limit=CONCURRENCY + 20,
+        ssl=False,
+        limit_per_host=0,      # no per-host cap
+        enable_cleanup_closed=True,
+    )
+    parse_pool = ThreadPoolExecutor(max_workers=PARSE_WORKERS)
     results    = []
     done       = 0
     total      = len(product_ids)
-    parse_pool = ThreadPoolExecutor(max_workers=8)
 
     async with aiohttp.ClientSession(
         headers=HEADERS, timeout=timeout, connector=connector
     ) as session:
-        tasks = [fetch_one(session, semaphore, pid, parse_pool, mode) for pid in product_ids]
+        tasks = [
+            _fetch_one(session, semaphore, pid, parse_pool, mode, country)
+            for pid in product_ids
+        ]
         for coro in asyncio.as_completed(tasks):
             r = await coro
             results.append(r)
             done += 1
-            if progress_callback and (done % 500 == 0 or done == total):
-                progress_callback(done, total)
+            if done % 500 == 0 or done == total:
+                fails = sum(1 for x in results if x['status'] in RETRY_STATUSES)
+                logger.info(f"{label}: {done}/{total} done — {fails} failures so far")
 
     parse_pool.shutdown(wait=False)
     return results
@@ -388,38 +389,66 @@ async def scrape_all_async(product_ids, mode='all', progress_callback=None):
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def scrape_products_bulk(product_ids, mode='all', progress_callback=None):
-    import time
-    results = asyncio.run(scrape_all_async(product_ids, mode, progress_callback))
+def scrape_products_bulk(product_ids, mode='all', country='ae', progress_callback=None):
+    """
+    Fast 3-pass scraping:
+      Pass 1 — all products at full concurrency, no waiting
+      Pass 2 — retry failures after short delay
+      Pass 3 — final retry for persistent failures
+    """
+    total = len(product_ids)
+    logger.info(f"Starting Pass 1 — {total} products, concurrency={CONCURRENCY}")
+
+    # ── Pass 1: full speed ────────────────────────────────────────────────────
+    results    = asyncio.run(_run_pass(product_ids, mode, country, 'Pass 1'))
     result_map = {r['product_id']: r for r in results}
 
-    for attempt in range(MAX_RETRIES):
-        failed_ids = [
-            pid for pid, r in result_map.items()
-            if r.get('status') in RETRY_STATUSES
-            or (r.get('status', '').startswith('HTTP ') and r.get('status') not in ('HTTP 404',))
-        ]
-        if not failed_ids:
-            break
-        delay = RETRY_DELAYS[attempt]
-        has_429 = any(result_map[pid].get('status') == 'HTTP 429' for pid in failed_ids)
-        if has_429:
-            delay = max(delay, 30)
-        time.sleep(delay)
+    failed = [pid for pid, r in result_map.items() if r['status'] in RETRY_STATUSES]
+    logger.info(f"Pass 1 done — {total - len(failed)}/{total} succeeded, {len(failed)} to retry")
 
-        retry_results = asyncio.run(scrape_all_async(failed_ids, mode))
-        for r in retry_results:
-            pid = r['product_id']
-            if r.get('status') not in RETRY_STATUSES:
-                result_map[pid] = r
-            else:
-                result_map[pid]['error'] = (
-                    f"Failed after {attempt+2} attempts: {r.get('status')} {r.get('error','')}"
-                ).strip()[:120]
+    if not failed:
+        return list(result_map.values())
+
+    # ── Pass 2: retry failures ────────────────────────────────────────────────
+    logger.info(f"Waiting {RETRY_DELAY_1}s before Pass 2 ({len(failed)} items)…")
+    time.sleep(RETRY_DELAY_1)
+
+    retry2  = asyncio.run(_run_pass(failed, mode, country, 'Pass 2'))
+    still_failing = []
+    for r in retry2:
+        pid = r['product_id']
+        if r['status'] not in RETRY_STATUSES:
+            result_map[pid] = r   # recovered
+        else:
+            still_failing.append(pid)
+
+    logger.info(f"Pass 2 done — {len(failed) - len(still_failing)} recovered, {len(still_failing)} still failing")
+
+    if not still_failing:
+        return list(result_map.values())
+
+    # ── Pass 3: final retry ───────────────────────────────────────────────────
+    logger.info(f"Waiting {RETRY_DELAY_2}s before Pass 3 ({len(still_failing)} items)…")
+    time.sleep(RETRY_DELAY_2)
+
+    retry3 = asyncio.run(_run_pass(still_failing, mode, country, 'Pass 3'))
+    for r in retry3:
+        pid = r['product_id']
+        if r['status'] not in RETRY_STATUSES:
+            result_map[pid] = r  # recovered
+        else:
+            # Mark as permanent failure
+            result_map[pid]['error'] = (
+                f"Failed after 3 passes: {r['status']} {r.get('error', '')}"
+            ).strip()[:120]
+
+    final_fails = sum(1 for r in result_map.values() if r['status'] in RETRY_STATUSES)
+    logger.info(f"All passes done — {total - final_fails}/{total} succeeded, {final_fails} permanent failures")
 
     return list(result_map.values())
 
 
-def scrape_product(product_id, mode='all'):
-    results = scrape_products_bulk([product_id], mode)
+def scrape_product(product_id, mode='all', country='ae'):
+    """Single product — for debug route."""
+    results = scrape_products_bulk([product_id], mode, country)
     return results[0] if results else {}

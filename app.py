@@ -4,7 +4,6 @@ import io
 import csv
 import logging
 import tempfile
-import threading
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -80,20 +79,16 @@ def read_excel(filepath):
     products = []
     headers  = []
     for row_idx, row in enumerate(ws.iter_rows(values_only=True)):
-        try:
-            if not row or row[0] is None:
-                continue
-            first = str(row[0]).strip().lower()
-            if row_idx == 0 and first in ('product id', 'productid', 'product_id', 'id', 'sku', 'barcode'):
-                headers = [str(c) if c else '' for c in row]
-                continue
-            products.append({
-                'id':    row[0],
-                'extra': [str(c) if c is not None else '' for c in list(row[1:5])],
-            })
-        except Exception:
+        if not row or row[0] is None:
             continue
-    wb.close()
+        first = str(row[0]).strip().lower()
+        if row_idx == 0 and first in ('product id', 'productid', 'product_id', 'id', 'sku', 'barcode'):
+            headers = [str(c) if c else '' for c in row]
+            continue
+        products.append({
+            'id':    row[0],
+            'extra': [str(c) if c is not None else '' for c in list(row[1:5])],
+        })
     if not headers and products:
         headers = ['Product ID', 'Col 2', 'Col 3', 'Col 4', 'Col 5']
     return products, headers
@@ -101,7 +96,7 @@ def read_excel(filepath):
 
 # ── Core checker ──────────────────────────────────────────────────────────────
 
-def build_state(results, headers, mode, prior_results=None, is_partial=False):
+def build_state(results, headers, mode, prior_results=None, is_partial=False, country='ae'):
     all_results = (prior_results or []) + results
     return {
         'results':   all_results,
@@ -114,12 +109,13 @@ def build_state(results, headers, mode, prior_results=None, is_partial=False):
         'no_stock':  sum(1 for r in all_results if r['status'] == 'Found' and r.get('in_stock') is False),
         'headers':   headers,
         'mode':      mode,
+        'country':   country,
         'partial':   is_partial,
     }
 
 
-def run_checker(mode='all'):
-    logger.info(f"Starting check — mode: {mode}")
+def run_checker(mode='all', country='ae'):
+    logger.info(f"Starting check — mode: {mode}, country: {country}")
 
     if not os.path.exists(UPLOAD_FILE):
         logger.warning("No upload file — skipping")
@@ -152,7 +148,7 @@ def run_checker(mode='all'):
 
     for chunk_start in range(0, len(product_ids), CHUNK):
         chunk_ids = product_ids[chunk_start:chunk_start + CHUNK]
-        chunk_raw = scrape_products_bulk(chunk_ids, mode=mode)
+        chunk_raw = scrape_products_bulk(chunk_ids, mode=mode, country=country)
 
         for r in chunk_raw:
             pid = str(r.get('product_id', ''))
@@ -160,7 +156,7 @@ def run_checker(mode='all'):
             results.append(r)
 
         is_partial = chunk_start + len(chunk_ids) < len(product_ids)
-        state = build_state(results, headers, mode, prior_results, is_partial)
+        state = build_state(results, headers, mode, prior_results, is_partial, country)
         save_results(state)
         logger.info(f"Saved: {len(prior_results) + len(results)}/{len(prior_results) + len(product_ids)}")
 
@@ -205,22 +201,31 @@ def upload():
         return jsonify({'error': f'Could not read file: {str(e)}'}), 400
 
 
-
 @app.route('/run', methods=['POST'])
 def run_now():
-    data = request.json or {}
-    mode = data.get('mode', 'all')
-    if mode not in MODES:
-        mode = 'all'
-    if not os.path.exists(UPLOAD_FILE):
-        return jsonify({'error': 'Upload a file first'}), 400
-
-    def bg():
-        run_checker(mode)
-
-    t = threading.Thread(target=bg, daemon=True)
-    t.start()
-    return jsonify({'success': True, 'running': True})
+    try:
+        data = request.json or {}
+        mode    = data.get('mode', 'all')
+        country = data.get('country', 'ae')
+        if mode not in MODES:
+            mode = 'all'
+        if country not in ('ae', 'sa'):
+            country = 'ae'
+        state = run_checker(mode, country)
+        if state is None:
+            return jsonify({'error': 'Upload a file first, or file contains no products'}), 400
+        return jsonify({
+            'success':   True,
+            'total':     state['total'],
+            'found':     state['found'],
+            'not_found': state['not_found'],
+            'errors':    state['errors'],
+            'no_image':  state['no_image'],
+            'no_stock':  state.get('no_stock', 0),
+        })
+    except Exception as e:
+        logger.exception("run_now failed")
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/results')
@@ -371,4 +376,4 @@ def debug_product(pid):
 
 
 if __name__ == '__main__':
-    app.run(debug=True, use_reloader=False)
+    app.run(debug=True, use_reloader=False, port=5011)
